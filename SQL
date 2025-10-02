@@ -1,0 +1,325 @@
+The browsing tool was unable to extract the data schema from the Jupyter Notebook on GitHub, so the following SQL queries are based on a **standard, inferred relational schema** for a supply chain dataset.
+
+I will use three main assumed tables:
+
+1.  **`SALES`** (contains order line items, sales, profit, quantities, and dates)
+2.  **`PRODUCTS`** (contains product hierarchy: name, category, department)
+3.  **`CUSTOMERS`** (contains customer demographic info)
+4.  **`INVENTORY`** (contains warehouse and cost info)
+5.  **`SHIPMENTS`** (contains fulfillment and logistics info)
+
+-----
+
+## Business Performance
+
+### 1\. What are the total net sales, profit, and profit margin by the company?
+
+```sql
+SELECT
+    SUM(NetSales) AS TotalNetSales,
+    SUM(Profit) AS TotalProfit,
+    (SUM(Profit) / SUM(NetSales)) * 100 AS OverallProfitMarginPercentage
+FROM SALES;
+```
+
+### 2\. What are the average net sales and profit per month?
+
+```sql
+SELECT
+    STRFTIME('%Y-%m', OrderDate) AS YearMonth,
+    AVG(MonthlyNetSales) AS AverageMonthlyNetSales,
+    AVG(MonthlyProfit) AS AverageMonthlyProfit
+FROM (
+    -- Calculate total sales and profit for each month first
+    SELECT
+        STRFTIME('%Y-%m', OrderDate) AS Month,
+        SUM(NetSales) AS MonthlyNetSales,
+        SUM(Profit) AS MonthlyProfit
+    FROM SALES
+    GROUP BY 1
+) AS MonthlyTotals;
+```
+
+### 3\. How do the net sales and profit change over time?
+
+```sql
+SELECT
+    STRFTIME('%Y-%m', OrderDate) AS YearMonth,
+    SUM(NetSales) AS TotalNetSales,
+    SUM(Profit) AS TotalProfit
+FROM SALES
+GROUP BY 1
+ORDER BY 1;
+```
+
+### 4\. How do the number of orders change over time?
+
+```sql
+SELECT
+    STRFTIME('%Y-%m', OrderDate) AS YearMonth,
+    COUNT(DISTINCT OrderID) AS TotalOrders
+FROM SALES
+GROUP BY 1
+ORDER BY 1;
+```
+
+### 5\. How do the average order quantity and average unit price change over time?
+
+```sql
+SELECT
+    STRFTIME('%Y-%m', OrderDate) AS YearMonth,
+    AVG(OrderQuantity) AS AverageOrderQuantity,
+    AVG(UnitPrice) AS AverageUnitPrice
+FROM SALES
+GROUP BY 1
+ORDER BY 1;
+```
+
+### 6\. Which product departments account for the majority of net sales and number of orders?
+
+```sql
+SELECT
+    T2.ProductDepartment,
+    SUM(T1.NetSales) AS TotalNetSales,
+    COUNT(DISTINCT T1.OrderID) AS TotalOrders
+FROM SALES AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+GROUP BY 1
+ORDER BY TotalNetSales DESC, TotalOrders DESC;
+```
+
+-----
+
+## Customer
+
+### 1\. How was the distribution of customers by country and market?
+
+```sql
+SELECT
+    Country,
+    Market,
+    COUNT(CustomerID) AS CustomerCount,
+    (CAST(COUNT(CustomerID) AS REAL) * 100 / (SELECT COUNT(*) FROM CUSTOMERS)) AS PercentageOfTotal
+FROM CUSTOMERS
+GROUP BY 1, 2
+ORDER BY CustomerCount DESC;
+```
+
+### 2\. How many customers does the company have over time?
+
+```sql
+SELECT
+    STRFTIME('%Y-%m', CustomerSinceDate) AS MonthJoined,
+    COUNT(CustomerID) AS NewCustomers
+FROM CUSTOMERS
+GROUP BY 1
+ORDER BY 1;
+
+-- To get cumulative customers, you would need a window function (if supported by your SQL dialect):
+-- SELECT
+--    MonthJoined,
+--    SUM(NewCustomers) OVER (ORDER BY MonthJoined) AS CumulativeCustomers
+-- FROM (
+--    SELECT STRFTIME('%Y-%m', CustomerSinceDate) AS MonthJoined, COUNT(CustomerID) AS NewCustomers FROM CUSTOMERS GROUP BY 1
+-- );
+```
+
+### 3\. Are there any patterns or trends of buying behavior over time?
+
+```sql
+-- Analyze monthly average sales per customer
+SELECT
+    STRFTIME('%Y-%m', T1.OrderDate) AS YearMonth,
+    COUNT(DISTINCT T1.CustomerID) AS ActiveCustomers,
+    SUM(T1.NetSales) AS TotalNetSales,
+    SUM(T1.NetSales) / COUNT(DISTINCT T1.CustomerID) AS AvgSalesPerCustomer
+FROM SALES AS T1
+GROUP BY 1
+ORDER BY 1;
+```
+
+-----
+
+## Product
+
+### 1\. Which product categories and product names are most preferred (by order quantity)?
+
+```sql
+SELECT
+    T2.ProductCategory,
+    T2.ProductName,
+    SUM(T1.OrderQuantity) AS TotalQuantityOrdered
+FROM SALES AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+GROUP BY 1, 2
+ORDER BY TotalQuantityOrdered DESC;
+```
+
+### 2\. Which product categories and product names are most profitable?
+
+```sql
+SELECT
+    T2.ProductCategory,
+    T2.ProductName,
+    SUM(T1.Profit) AS TotalProfit
+FROM SALES AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+GROUP BY 1, 2
+ORDER BY TotalProfit DESC;
+```
+
+-----
+
+## Inventory
+
+### 1\. Which product departments account for the majority of warehouse inventory and storage cost?
+
+```sql
+SELECT
+    T2.ProductDepartment,
+    SUM(T1.WarehouseInventory) AS TotalWarehouseInventory,
+    SUM(T1.StorageCost) AS TotalStorageCost
+FROM INVENTORY AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+GROUP BY 1
+ORDER BY TotalWarehouseInventory DESC, TotalStorageCost DESC;
+```
+
+### 2\. How is the inventory cost per unit distributed by the product department?
+
+```sql
+SELECT
+    T2.ProductDepartment,
+    AVG(T1.InventoryCostPerUnit) AS AverageInventoryCostPerUnit,
+    MIN(T1.InventoryCostPerUnit) AS MinInventoryCostPerUnit,
+    MAX(T1.InventoryCostPerUnit) AS MaxInventoryCostPerUnit
+FROM INVENTORY AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+GROUP BY 1
+ORDER BY AverageInventoryCostPerUnit DESC;
+```
+
+### 3\. How do the warehouse inventory and storing costs change over time?
+
+*(Assuming the `INVENTORY` table has a `SnapshotDate` column to track inventory over time. If not, this query cannot be answered.)*
+
+```sql
+SELECT
+    STRFTIME('%Y-%m', SnapshotDate) AS YearMonth,
+    SUM(WarehouseInventory) AS TotalMonthlyInventory,
+    SUM(StorageCost) AS TotalMonthlyStorageCost
+FROM INVENTORY
+GROUP BY 1
+ORDER BY 1;
+```
+
+### 4\. Which product names and product departments account for the majority of storing cost?
+
+```sql
+SELECT
+    T2.ProductDepartment,
+    T2.ProductName,
+    SUM(T1.StorageCost) AS TotalStorageCost
+FROM INVENTORY AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+GROUP BY 1, 2
+ORDER BY TotalStorageCost DESC;
+```
+
+### 5\. What is the average of the average fulfillment order?
+
+*(Assuming the `SALES` table contains `OrderFulfillmentDays` for each line item.)*
+
+```sql
+SELECT
+    AVG(AvgOrderFulfillmentDays) AS OverallAverageFulfillmentDays
+FROM (
+    -- Calculate the average fulfillment days per order first
+    SELECT
+        OrderID,
+        AVG(OrderFulfillmentDays) AS AvgOrderFulfillmentDays
+    FROM SALES
+    GROUP BY OrderID
+) AS OrderAverages;
+```
+
+### 6\. What is the average order fulfillment of each product department?
+
+```sql
+SELECT
+    T2.ProductDepartment,
+    AVG(T1.OrderFulfillmentDays) AS AverageFulfillmentDays
+FROM SALES AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+GROUP BY 1
+ORDER BY AverageFulfillmentDays;
+```
+
+-----
+
+## Shipment
+
+### 1\. Which warehouses are orders shipped from?
+
+```sql
+SELECT DISTINCT
+    WarehouseName,
+    COUNT(OrderID) AS TotalOrdersShipped
+FROM SALES
+GROUP BY 1
+ORDER BY TotalOrdersShipped DESC;
+```
+
+### 2\. Which shipment modes are preferred by customers?
+
+```sql
+SELECT
+    ShipmentMode,
+    COUNT(OrderID) AS TotalOrders,
+    (CAST(COUNT(OrderID) AS REAL) * 100 / (SELECT COUNT(OrderID) FROM SALES)) AS PercentageOfOrders
+FROM SALES
+GROUP BY 1
+ORDER BY TotalOrders DESC;
+```
+
+### 3\. What is the shipping time for each shipment mode?
+
+*(Using the difference between `ShipmentDate` and `OrderDate` to calculate shipping time, or assuming a `ShippingTimeDays` column exists.)*
+
+```sql
+SELECT
+    ShipmentMode,
+    AVG(ShippingTimeDays) AS AverageShippingTimeInDays,
+    MIN(ShippingTimeDays) AS MinShippingTimeInDays,
+    MAX(ShippingTimeDays) AS MaxShippingTimeInDays
+FROM SALES
+GROUP BY 1
+ORDER BY AverageShippingTimeInDays;
+```
+
+### 4\. What is the late shipment rate by product department and market?
+
+*(Assuming `IsLate` is a boolean/flag (1=Late, 0=On-time) in the `SALES` table, and joining to `CUSTOMERS` for the market.)*
+
+```sql
+SELECT
+    T3.Market,
+    T2.ProductDepartment,
+    AVG(CAST(T1.IsLate AS REAL)) * 100 AS LateShipmentRate
+FROM SALES AS T1
+JOIN PRODUCTS AS T2 ON T1.ProductID = T2.ProductID
+JOIN CUSTOMERS AS T3 ON T1.CustomerID = T3.CustomerID
+GROUP BY 1, 2
+ORDER BY LateShipmentRate DESC;
+```
+
+### 5\. How does the late shipment rate fluctuate over time?
+
+```sql
+SELECT
+    STRFTIME('%Y-%m', OrderDate) AS YearMonth,
+    AVG(CAST(IsLate AS REAL)) * 100 AS LateShipmentRate
+FROM SALES
+GROUP BY 1
+ORDER BY 1;
+```
